@@ -255,7 +255,7 @@ def IntegrateSpectrumFine_pytensor(x1, x2, mnu: float, E0: float, step=5e-3):
 
 
 def CalcMuSignal_pytensor(mNu: pt.TensorVariable, E0: pt.TensorVariable,
-                          binEdges: pt.TensorVariable, tLive: float, numDens: float,
+                          binEdges: np.ndarray, tLive: float, numDens: float,
                           tVolume: float, subdivisionStep: float = 5e-3) -> pt.TensorVariable:
     """
     Calculate the expected signal in each energy bin for a given neutrino mass 
@@ -267,7 +267,7 @@ def CalcMuSignal_pytensor(mNu: pt.TensorVariable, E0: pt.TensorVariable,
         Neutrino mass in eV
     E : pytensor.tensor.TensorVariable
         Endpoint energy in eV
-    binEdges : pytensor.tensor.TensorVariable
+    binEdges : np.ndarray
         Edges of the energy bins in eV 
     tLive : float
         Live time in seconds
@@ -283,3 +283,100 @@ def CalcMuSignal_pytensor(mNu: pt.TensorVariable, E0: pt.TensorVariable,
     pytensor.tensor.TensorVariable
         The expected signal events in each energy bin
     """
+    sigMuList = []
+    # Ensure binEdges is a tensor variable
+    binEdgesPt = pt.as_tensor_variable(binEdges)
+    for i in range(len(binEdges) - 1):
+        binCont = IntegrateSpectrumFine_pytensor(binEdgesPt[i], binEdgesPt[i+1],
+                                                 mNu, E0, subdivisionStep)
+        binCont *= tLive * numDens * tVolume
+        sigMuList.append(binCont)
+
+    sigMu = pt.stack(sigMuList)
+    return sigMu
+
+
+def GenerateBkgEvents(b: float, tLive: float, energyWindow: tuple[float, float]):
+    """
+    Generate background events from a flat background rate.
+
+    Parameters
+    ----------
+    b : float
+        Background rate in counts per second per eV
+    tLive : float
+        Live time of the detector in seconds
+    energyWindow : tuple of float, optional
+        Energy window for the events in keV (default is (17.7, 18.7))
+
+    Returns
+    -------
+    np.ndarray
+        Array of generated event energies in keV
+    """
+    nEvents = np.random.poisson(
+        b * tLive * (energyWindow[1] - energyWindow[0]))
+    # Uniformly distributed in the energy window
+    return np.random.uniform(energyWindow[0], energyWindow[1], nEvents)
+
+
+def CalculateR(numDens: float, volume: float):
+    """
+    Calculate the signal rate for a given number density and volume.
+
+    Parameters
+    ----------
+    numDens : float
+        Number density of tritium atoms in m^-3
+    volume : float
+        Effective volume of the detector in m^3
+
+    Returns
+    -------
+    float
+        Signal rate in counts per second
+    """
+    MEAN_LIFE_T = 12.33 * 365.25 * 24 * 3600 / np.log(2)  # in seconds
+    return 2e-13 * numDens * volume / MEAN_LIFE_T
+
+
+def OptimalDeltaE(r: float, b: float):
+    """
+    Calculate the optimal energy resolution for a given signal and background rate.
+
+    Parameters
+    ----------
+    r : float
+        Signal rate in the last eV
+    b : float
+        Background rate in counts per second
+
+    Returns
+    -------
+    float
+        Optimal energy resolution in eV
+    """
+    return np.sqrt(b / r)  # in eV
+
+
+def Calculate90CL(r: float, b: float, tLive: float):
+    """
+    Calculate the frequentist 90% confidence level upper limit for the neutrino
+    mass based on the signal and background rates.
+
+    Parameters
+    ----------
+    r : float
+        Signal rate in counts per second
+    b : float
+        Background rate in counts per second
+    tLive : float
+        Live time of the detector in seconds
+
+    Returns
+    -------
+    float
+        The 90% confidence level upper limit for the neutrino mass in eV
+    """
+    dE = OptimalDeltaE(r, b)
+    return 2.0 * np.sqrt(r * tLive * dE + b * tLive / dE) / (3 * r * tLive)
